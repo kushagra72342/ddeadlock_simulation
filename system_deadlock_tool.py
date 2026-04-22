@@ -11,7 +11,7 @@ import os
 import sys
 from collections import defaultdict
 
-# Add current directory to path if needed to find deadlock_engine
+# Add current directory to path if needed to finds deadlock_engine
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from deadlock_engine import DeadlockEngine, SystemState
 
