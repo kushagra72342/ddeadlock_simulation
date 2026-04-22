@@ -34,7 +34,7 @@ python main.py
 ### Frontend
 
 Open `frontend/index.html` in any browser.  
-The frontend works **standalone** (local JS engine) and connects to the backend API when available.
+The frontend works *standalone* (local JS engine) and connects to the backend API when available.
 
 ---
 
