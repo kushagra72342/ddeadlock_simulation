@@ -1,0 +1,1423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeadlockX — Real-Time Deadlock Detection</title>
+<meta name="description" content="Interactive deadlock detection tool — visualize circular wait conditions, run DFS traces, and explore resolution strategies.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0a0a0b;
+    --surface:  #111114;
+    --card:     #18181d;
+    --border:   #2a2a33;
+    --border2:  #3a3a47;
+    --text:     #e8e8f0;
+    --muted:    #6b6b80;
+    --accent:   #7c6af5;
+    --accent2:  #a594f9;
+    --danger:   #f04f4f;
+    --warn:     #f0a030;
+    --ok:       #4fbf7f;
+    --info:     #4fa8f0;
+    --mono:     'Space Mono', monospace;
+    --sans:     'DM Sans', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ── Layout ── */
+  .app { display: grid; grid-template-rows: 56px 1fr; height: 100vh; overflow: hidden; }
+
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: relative; z-index: 10;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 13px; font-weight: 700;
+    color: var(--accent2);
+    letter-spacing: .05em;
+  }
+  .logo span { color: var(--muted); }
+  .status-pill {
+    font-family: var(--mono); font-size: 11px;
+    padding: 3px 10px; border-radius: 20px;
+    display: flex; align-items: center; gap: 6px;
+    border: 1px solid;
+    transition: all .3s;
+  }
+  .status-pill.ok  { border-color: var(--ok);     color: var(--ok);     background: rgba(79,191,127,.08); }
+  .status-pill.bad { border-color: var(--danger);  color: var(--danger);  background: rgba(240,79,79,.08); }
+  .status-pill.idle{ border-color: var(--muted);   color: var(--muted);   background: transparent; }
+  .pulse { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  .header-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .api-url { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .api-url input {
+    background: var(--card); border: 1px solid var(--border); border-radius: 4px;
+    color: var(--muted); font-family: var(--mono); font-size: 11px;
+    padding: 3px 8px; width: 220px; outline: none;
+  }
+  .api-url input:focus { border-color: var(--accent); }
+
+  .main { display: grid; grid-template-columns: 260px 1fr 300px; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  .sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); }
+  .sidebar-title {
+    font-family: var(--mono); font-size: 10px; font-weight: 700;
+    color: var(--muted); letter-spacing: .1em; text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .scenario-btn {
+    width: 100%; text-align: left;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 12px;
+    color: var(--text); font-family: var(--sans); font-size: 13px;
+    cursor: pointer; transition: all .15s;
+    margin-bottom: 6px; display: block;
+  }
+  .scenario-btn:hover { border-color: var(--accent); background: rgba(124,106,245,.08); }
+  .scenario-btn.active { border-color: var(--accent); background: rgba(124,106,245,.12); }
+  .scenario-btn small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+  .add-row { display: flex; gap: 6px; margin-bottom: 8px; }
+  .add-row input, .add-row select {
+    flex: 1; background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text); font-family: var(--sans);
+    font-size: 12px; padding: 6px 10px; outline: none;
+  }
+  .add-row input:focus, .add-row select:focus { border-color: var(--accent); }
+  .mini-btn {
+    background: var(--accent); border: none; border-radius: 6px;
+    color: #fff; font-family: var(--mono); font-size: 11px; font-weight: 700;
+    padding: 6px 10px; cursor: pointer; transition: background .15s; white-space: nowrap;
+  }
+  .mini-btn:hover { background: var(--accent2); }
+  .mini-btn.danger { background: rgba(240,79,79,.2); color: var(--danger); }
+  .mini-btn.danger:hover { background: rgba(240,79,79,.35); }
+
+  /* ── Center Canvas ── */
+  .center { display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+  .toolbar {
+    display: flex; gap: 6px; padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-wrap: wrap;
+  }
+  .tab-btn {
+    font-family: var(--mono); font-size: 11px; font-weight: 700;
+    letter-spacing: .05em; padding: 5px 14px; border-radius: 4px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; transition: all .15s;
+  }
+  .tab-btn:hover { color: var(--text); border-color: var(--border2); }
+  .tab-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .canvas-area { flex: 1; overflow: hidden; position: relative; }
+  canvas#ragCanvas { width: 100%; height: 100%; display: block; }
+
+  .step-controls {
+    display: none; align-items: center; gap: 10px;
+    padding: 10px 16px; border-top: 1px solid var(--border);
+    background: var(--surface); font-family: var(--mono); font-size: 12px;
+  }
+  .step-controls.visible { display: flex; }
+  .step-info { flex: 1; color: var(--muted); }
+  .step-msg { color: var(--warn); }
+
+  /* ── Matrix ── */
+  .matrix-wrap { padding: 16px; overflow: auto; height: 100%; }
+  table.matrix {
+    border-collapse: collapse; font-family: var(--mono); font-size: 12px; width: 100%;
+  }
+  .matrix th {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 8px 14px; color: var(--muted); font-weight: 700;
+    letter-spacing: .05em;
+  }
+  .matrix td {
+    border: 1px solid var(--border); padding: 8px 14px; text-align: center;
+  }
+  .matrix tr.deadlocked td { background: rgba(240,79,79,.06); }
+  .chip { display: inline-block; border-radius: 4px; padding: 1px 8px; font-size: 11px; }
+  .chip.h { background: rgba(79,191,127,.15); color: var(--ok); }
+  .chip.w { background: rgba(240,160,48,.15); color: var(--warn); }
+
+  /* ── Log / Trace ── */
+  .trace-wrap { padding: 12px 16px; height: 100%; overflow-y: auto; font-family: var(--mono); font-size: 11px; }
+  .trace-line { padding: 3px 0; border-bottom: 1px solid rgba(42,42,51,.5); display: flex; gap: 10px; }
+  .trace-line .step-num { color: var(--muted); min-width: 34px; }
+  .trace-line .action { min-width: 90px; }
+  .trace-line.visit .action   { color: var(--info); }
+  .trace-line.explore .action { color: var(--muted); }
+  .trace-line.cycle .action   { color: var(--danger); font-weight: 700; }
+  .trace-line.back .action    { color: var(--accent); }
+  .trace-line .msg { color: var(--text); flex: 1; }
+  .trace-line.cycle .msg      { color: var(--danger); }
+
+  /* ── Right Panel ── */
+  .right-panel {
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+    overflow-y: auto;
+    display: flex; flex-direction: column;
+  }
+  .rp-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .rp-title {
+    font-family: var(--mono); font-size: 10px; font-weight: 700;
+    color: var(--muted); letter-spacing: .1em; text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .cycle-card {
+    border: 1px solid var(--danger);
+    border-radius: 6px; padding: 10px 12px;
+    background: rgba(240,79,79,.05);
+    margin-bottom: 8px;
+  }
+  .cycle-card .cycle-path {
+    font-family: var(--mono); font-size: 11px; color: var(--danger);
+    word-break: break-all; margin-top: 4px; line-height: 1.8;
+  }
+  .cycle-card .badge { font-size: 10px; padding: 2px 7px; border-radius: 3px; }
+  .safe-card {
+    border: 1px solid var(--ok); border-radius: 6px; padding: 10px 12px;
+    background: rgba(79,191,127,.05); color: var(--ok);
+    font-family: var(--mono); font-size: 12px;
+  }
+
+  .proc-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 8px 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--card);
+    margin-bottom: 6px; cursor: pointer; transition: border-color .15s;
+  }
+  .proc-item:hover { border-color: var(--border2); }
+  .proc-item.deadlocked { border-color: rgba(240,79,79,.4); }
+  .proc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+
+  .strategy-card {
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px;
+    background: var(--card); cursor: pointer;
+    transition: border-color .15s;
+  }
+  .strategy-card:hover { border-color: var(--accent); }
+  .strategy-card.expanded { border-color: var(--accent); }
+  .strategy-card h4 { font-size: 12px; font-weight: 500; margin-bottom: 2px; }
+  .strategy-card .cost-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .strategy-body { display: none; font-size: 11px; color: var(--muted); line-height: 1.7; }
+  .strategy-body.open { display: block; }
+  .strategy-body ol { padding-left: 16px; margin-top: 6px; }
+  .strategy-body li { margin-bottom: 3px; }
+
+  .safe-seq {
+    font-family: var(--mono); font-size: 11px; color: var(--ok);
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .seq-node {
+    background: rgba(79,191,127,.1); border: 1px solid rgba(79,191,127,.3);
+    border-radius: 4px; padding: 2px 8px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .seq-arrow { color: var(--muted); }
+
+  /* ── Badges ── */
+  .bd { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 3px; font-family: var(--mono); font-weight: 700; }
+  .bd-danger { background: rgba(240,79,79,.15); color: var(--danger); }
+  .bd-ok     { background: rgba(79,191,127,.15); color: var(--ok); }
+  .bd-warn   { background: rgba(240,160,48,.15); color: var(--warn); }
+  .bd-info   { background: rgba(79,168,240,.15); color: var(--info); }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  /* ── Loader ── */
+  .spinner {
+    width: 16px; height: 16px; border: 2px solid var(--border2);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .6s linear infinite; display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state { color: var(--muted); font-size: 12px; text-align: center; padding: 16px 0; }
+
+  /* ── Banker's Fix Panel ── */
+  .bankers-wrap { padding: 16px; height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+  .bankers-section { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+  .bankers-section-title { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 10px; }
+  .bankers-matrix { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
+  .bankers-matrix th { background: var(--surface); border: 1px solid var(--border); padding: 6px 10px; color: var(--muted); font-weight: 700; letter-spacing: .05em; }
+  .bankers-matrix td { border: 1px solid var(--border); padding: 6px 10px; text-align: center; }
+  .bankers-matrix tr.proc-safe td { background: rgba(79,191,127,.04); }
+  .bankers-matrix tr.proc-unsafe td { background: rgba(240,79,79,.04); }
+  .bk-num { font-family: var(--mono); font-size: 12px; color: var(--accent2); }
+  .bk-num.zero { color: var(--border2); }
+  .resolve-btn {
+    width: 100%; padding: 10px; border: none; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), #5e4fd6);
+    color: #fff; font-family: var(--mono); font-size: 12px; font-weight: 700;
+    cursor: pointer; letter-spacing: .05em;
+    transition: opacity .15s, transform .1s;
+  }
+  .resolve-btn:hover { opacity: .88; transform: translateY(-1px); }
+  .resolve-btn:active { transform: translateY(0); }
+  .resolve-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .bk-step { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(42,42,51,.5); font-family: var(--mono); font-size: 11px; align-items: flex-start; }
+  .bk-step .bk-phase { min-width: 58px; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; text-align: center; }
+  .bk-phase.init   { background: rgba(79,168,240,.15); color: var(--info); }
+  .bk-phase.check  { background: rgba(124,106,245,.15); color: var(--accent2); }
+  .bk-phase.grant  { background: rgba(79,191,127,.15);  color: var(--ok); }
+  .bk-phase.deny   { background: rgba(240,79,79,.15);   color: var(--danger); }
+  .bk-phase.result { background: rgba(240,160,48,.15);  color: var(--warn); }
+  .bk-step .bk-msg { flex: 1; color: var(--text); line-height: 1.5; }
+  .bk-step.highlight-grant { background: rgba(79,191,127,.05); border-radius: 4px; }
+  .bk-step.highlight-deny  { background: rgba(240,79,79,.05);  border-radius: 4px; }
+  .sim-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .sim-row select, .sim-row input { flex: 1; min-width: 80px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: var(--sans); font-size: 12px; padding: 6px 10px; outline: none; }
+  .sim-row select:focus, .sim-row input:focus { border-color: var(--accent); }
+  .sim-result { margin-top: 8px; border-radius: 6px; padding: 10px 12px; font-family: var(--mono); font-size: 11px; line-height: 1.7; }
+  .sim-result.granted { background: rgba(79,191,127,.08); border: 1px solid rgba(79,191,127,.3); color: var(--ok); }
+  .sim-result.denied  { background: rgba(240,79,79,.08);  border: 1px solid rgba(240,79,79,.3);  color: var(--danger); }
+  .resolve-steps-log { max-height: 220px; overflow-y: auto; }
+  .resolve-step-row { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px solid rgba(42,42,51,.4); font-size: 11px; }
+  .resolve-step-row .rs-pid { font-family: var(--mono); font-weight: 700; min-width: 28px; color: var(--accent2); }
+  .resolve-step-row .rs-badge { font-family: var(--mono); font-size: 10px; padding: 2px 6px; border-radius: 3px; min-width: 52px; text-align: center; }
+  .rs-badge.granted { background: rgba(79,191,127,.15); color: var(--ok); }
+  .rs-badge.denied  { background: rgba(240,79,79,.15);  color: var(--danger); }
+  .resolve-step-row .rs-msg { color: var(--muted); flex: 1; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ── -->
+  <header>
+    <div class="logo">DEADLOCK<span>/</span>DETECTOR</div>
+    <div id="globalStatus" class="status-pill idle"><div class="pulse"></div><span id="statusText">Ready</span></div>
+    <div class="header-right">
+      <div class="api-url">
+        <span style="color:var(--muted);margin-right:4px">API</span>
+        <input id="apiBase" value="http://localhost:8000" placeholder="http://localhost:8000">
+      </div>
+      <button class="mini-btn" onclick="runAnalysis()">▶ Analyze</button>
+      <button class="mini-btn" onclick="runTrace()" style="background:rgba(124,106,245,.2);color:var(--accent)">⟳ Trace</button>
+    </div>
+  </header>
+
+  <div class="main">
+
+    <!-- ── Left Sidebar ── -->
+    <aside class="sidebar">
+
+      <!-- Scenarios -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">Scenarios</div>
+        <button class="scenario-btn" onclick="loadScenario('classic')">
+          Classic Deadlock
+          <small>3 processes, circular wait</small>
+        </button>
+        <button class="scenario-btn" onclick="loadScenario('chain')">
+          Chain Deadlock
+          <small>5-process chain</small>
+        </button>
+        <button class="scenario-btn" onclick="loadScenario('partial')">
+          Partial Deadlock
+          <small>Mixed safe/deadlocked</small>
+        </button>
+        <button class="scenario-btn" onclick="loadScenario('multi_instance')">
+          Multi-Instance
+          <small>Banker's Algorithm</small>
+        </button>
+        <button class="scenario-btn" onclick="loadScenario('safe')">
+          Safe State
+          <small>No deadlock</small>
+        </button>
+      </div>
+
+      <!-- Add Process -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">Add Process</div>
+        <div class="add-row">
+          <input id="newPid" placeholder="PID (e.g. P4)" maxlength="6">
+          <input id="newName" placeholder="Name">
+        </div>
+        <div class="add-row">
+          <select id="newHolds"><option value="">Holds resource…</option></select>
+          <select id="newWaits"><option value="">Waiting for…</option></select>
+        </div>
+        <div class="add-row">
+          <input id="newPrio" placeholder="Priority (1-5)" type="number" min="1" max="5" value="1" style="max-width:90px">
+          <button class="mini-btn" onclick="addProcess()">+ Process</button>
+        </div>
+      </div>
+
+      <!-- Add Resource -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">Add Resource</div>
+        <div class="add-row">
+          <input id="newRid" placeholder="RID (e.g. R4)" maxlength="6">
+          <input id="newRname" placeholder="Name">
+        </div>
+        <div class="add-row">
+          <input id="newInst" placeholder="Instances" type="number" min="1" value="1" style="max-width:70px">
+          <button class="mini-btn" onclick="addResource()">+ Resource</button>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">Session</div>
+        <div class="add-row">
+          <button class="mini-btn danger" onclick="clearAll()" style="width:100%">✕ Clear All</button>
+        </div>
+        <div class="add-row">
+          <button class="mini-btn" onclick="exportJSON()" style="width:100%;background:rgba(79,168,240,.2);color:var(--info)">↓ Export JSON</button>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ── Center ── -->
+    <div class="center">
+      <div class="toolbar">
+        <button class="tab-btn active" onclick="switchView('graph',this)">RAG Graph</button>
+        <button class="tab-btn" onclick="switchView('matrix',this)">Allocation Matrix</button>
+        <button class="tab-btn" onclick="switchView('trace',this)">DFS Trace</button>
+        <button class="tab-btn" onclick="switchView('bankers',this)" style="border-color:rgba(124,106,245,.5);color:var(--accent2)">⚙ Banker's Fix</button>
+      </div>
+
+      <div class="canvas-area">
+        <canvas id="ragCanvas"></canvas>
+        <div id="matrixView" style="display:none;height:100%;overflow:auto"><div class="matrix-wrap"><table class="matrix" id="matrixTable"></table></div></div>
+        <div id="traceView" style="display:none;height:100%;overflow:auto"><div class="trace-wrap" id="traceLog"></div></div>
+        <div id="bankersView" style="display:none;height:100%;overflow:auto">
+          <div class="bankers-wrap">
+
+            <!-- Allocation / Need / Available Matrix -->
+            <div class="bankers-section">
+              <div class="bankers-section-title">Banker's Matrix — Max · Allocation · Need · Available</div>
+              <div id="bankersMatrix"><div class="empty-state">Load a scenario to view the matrix</div></div>
+            </div>
+
+            <!-- Auto-Resolve -->
+            <div class="bankers-section">
+              <div class="bankers-section-title">Auto-Resolve via Banker's Algorithm</div>
+              <p style="font-size:12px;color:var(--muted);margin-bottom:10px">
+                Iteratively grant pending resource requests that keep the system safe. Unsafe requests are denied.
+              </p>
+              <button class="resolve-btn" id="runResolveBtn" onclick="runBankersResolve()">⚙ Run Banker's Fix</button>
+              <div id="resolveResult" style="margin-top:10px"></div>
+              <div class="resolve-steps-log" id="resolveSteps" style="margin-top:8px"></div>
+            </div>
+
+            <!-- Request Simulator -->
+            <div class="bankers-section">
+              <div class="bankers-section-title">Request Simulator — Check a Single Request</div>
+              <div class="sim-row">
+                <select id="simPid"><option value="">Process…</option></select>
+                <select id="simRid"><option value="">Resource…</option></select>
+                <input id="simCount" type="number" min="1" value="1" style="max-width:60px">
+                <button class="mini-btn" onclick="runSimRequest()">▶ Simulate</button>
+              </div>
+              <div id="simResult"></div>
+            </div>
+
+            <!-- Safety Trace -->
+            <div class="bankers-section">
+              <div class="bankers-section-title">Safety Algorithm Step Trace</div>
+              <button class="mini-btn" onclick="runBankersTrace()" style="margin-bottom:10px">▶ Run Safety Trace</button>
+              <div id="bankersTrace"><div class="empty-state">Click to run the Banker's safety check step-by-step</div></div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <div class="step-controls" id="stepControls">
+        <button class="mini-btn" onclick="stepBack()">← Prev</button>
+        <button class="mini-btn" onclick="stepForward()">Next →</button>
+        <span class="step-info">Step <span id="stepNum">0</span> / <span id="stepTotal">0</span></span>
+        <span class="step-msg" id="stepMsg"></span>
+        <button class="mini-btn" onclick="exitTrace()" style="background:transparent;color:var(--muted)">✕ Exit</button>
+      </div>
+    </div>
+
+    <!-- ── Right Panel ── -->
+    <aside class="right-panel">
+
+      <div class="rp-section">
+        <div class="rp-title">Detection Result</div>
+        <div id="cycleList"><div class="empty-state">Run analysis to detect cycles</div></div>
+      </div>
+
+      <div class="rp-section">
+        <div class="rp-title">Safe Sequence</div>
+        <div id="safeSeqPanel"><div class="empty-state">—</div></div>
+      </div>
+
+      <div class="rp-section">
+        <div class="rp-title">Processes</div>
+        <div id="procPanel"></div>
+      </div>
+
+      <div class="rp-section" style="flex:1">
+        <div class="rp-title">Resolution Strategies</div>
+        <div id="strategiesPanel"><div class="empty-state">Run analysis to see strategies</div></div>
+      </div>
+
+    </aside>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let state = { processes: [], resources: [] };
+let analysisResult = null;
+let traceSteps = [];
+let traceStep = 0;
+let currentView = 'graph';
+let canvas, ctx, W, H;
+const API = () => document.getElementById('apiBase').value.replace(/\/$/, '');
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  canvas = document.getElementById('ragCanvas');
+  ctx = canvas.getContext('2d');
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+  updateSelects();
+  loadScenarioLocal('classic');
+});
+
+function resizeCanvas() {
+  const area = canvas.parentElement;
+  const dpr = window.devicePixelRatio || 1;
+  W = area.clientWidth;
+  H = area.clientHeight;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  // BUG FIX: Reset transform before scaling to avoid accumulated scale on
+  // every resize call. Previously each resize multiplied the dpr on top of
+  // the previous scale, causing all subsequent draws to be zoomed/blurry.
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawGraph();
+}
+
+// ── API Calls ────────────────────────────────────────────────────────────────
+async function apiFetch(path, body) {
+  const base = API();
+  try {
+    const res = await fetch(base + path, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    console.warn('API unavailable, using local engine:', e.message);
+    return null;
+  }
+}
+
+// NOTE: loadScenario is defined once below (near the bottom) as the canonical version.
+// This duplicate is intentionally removed — the old version used event.currentTarget
+// after an await, which nulls the event reference and crashes.
+
+async function runAnalysis() {
+  if (!state.processes.length) return;
+  setStatus('idle', 'Analysing…');
+  document.getElementById('cycleList').innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
+
+  const data = await apiFetch('/analyze', state);
+  if (data) {
+    analysisResult = data;
+  } else {
+    analysisResult = localAnalyze(state);
+  }
+
+  renderResults(analysisResult);
+  drawGraph();
+  setStatus(analysisResult.has_deadlock ? 'bad' : 'ok',
+    analysisResult.has_deadlock
+      ? `${analysisResult.cycles.length} deadlock${analysisResult.cycles.length > 1 ? 's' : ''} found`
+      : 'No deadlock');
+}
+
+async function runTrace() {
+  if (!state.processes.length) return;
+  setStatus('idle', 'Tracing DFS…');
+  switchView('trace', document.querySelector('.tab-btn:nth-child(3)'));
+  document.getElementById('traceLog').innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
+
+  const data = await apiFetch('/analyze/step', state);
+  const steps = data ? data.steps : localDFSTrace(state);
+
+  traceSteps = steps;
+  traceStep = 0;
+  renderTraceLog(steps, -1);
+  document.getElementById('stepControls').classList.add('visible');
+  document.getElementById('stepTotal').textContent = steps.length;
+  updateStepUI();
+  setStatus('idle', 'DFS trace ready');
+}
+
+// ── Local Engine (fallback when API not running) ──────────────────────────────
+function localAnalyze(state) {
+  const graph = buildGraph(state);
+  const cycles = detectCycles(graph, state);
+  const safe = localSafeSeq(state);
+  const affected_processes = [...new Set(cycles.flat().filter(n => state.processes.find(p => p.pid === n)))];
+  const affected_resources  = [...new Set(cycles.flat().filter(n => state.resources.find(r => r.rid === n)))];
+  return {
+    has_deadlock: cycles.length > 0, cycles, affected_processes, affected_resources,
+    safe_sequence: safe,
+    resolution_strategies: generateStrategies(state, cycles),
+    allocation_matrix: Object.fromEntries(state.processes.map(p => [p.pid, { holds: p.holds, waiting_for: p.waiting_for }])),
+    graph_edges: buildEdges(state)
+  };
+}
+
+function buildGraph(state) {
+  const g = {};
+  state.processes.forEach(p => { g[p.pid] = []; });
+  state.resources.forEach(r => { g[r.rid] = []; });
+  state.processes.forEach(p => {
+    (p.holds||[]).forEach(r => { if (g[r]) g[r].push(p.pid); });
+    (p.waiting_for||[]).forEach(r => { if (g[p.pid]) g[p.pid].push(r); });
+  });
+  return g;
+}
+
+function buildEdges(state) {
+  const edges = [];
+  state.processes.forEach(p => {
+    (p.holds||[]).forEach(r => edges.push({ from: r, to: p.pid, type: 'holds' }));
+    (p.waiting_for||[]).forEach(r => edges.push({ from: p.pid, to: r, type: 'waits' }));
+  });
+  return edges;
+}
+
+function detectCycles(graph, state) {
+  const allNodes = [...state.processes.map(p=>p.pid), ...state.resources.map(r=>r.rid)];
+  const visited = new Set(), rec = new Set(), cycles = [], path = [];
+  function dfs(node) {
+    visited.add(node); rec.add(node); path.push(node);
+    for (const nb of (graph[node]||[])) {
+      if (!visited.has(nb)) dfs(nb);
+      else if (rec.has(nb)) {
+        const ci = path.indexOf(nb);
+        cycles.push([...path.slice(ci), nb]);
+      }
+    }
+    path.pop(); rec.delete(node);
+  }
+  allNodes.forEach(n => { if (!visited.has(n)) dfs(n); });
+  const seen = new Set(), unique = [];
+  cycles.forEach(c => { const k = [...c].sort().join('|'); if (!seen.has(k)) { seen.add(k); unique.push(c); } });
+  return unique;
+}
+
+function localSafeSeq(state) {
+  const procs = state.processes, res = state.resources;
+  const ri = Object.fromEntries(res.map((r,i)=>[r.rid,i]));
+  const m = res.length, n = procs.length;
+  const avail = res.map(r => r.available ?? 0);
+  const alloc = procs.map(p => res.map(r => (p.holds||[]).filter(x=>x===r.rid).length));
+  const need  = procs.map(p => res.map(r => ((p.holds||[]).filter(x=>x===r.rid).length + (p.waiting_for||[]).filter(x=>x===r.rid).length)));
+  const finish = new Array(n).fill(false);
+  const seq = [], work = [...avail];
+  for (let iter = 0; iter < n; iter++) {
+    for (let i = 0; i < n; i++) {
+      if (!finish[i] && need[i].every((v,j) => v <= work[j])) {
+        work.forEach((_,j) => work[j] += alloc[i][j]);
+        finish[i] = true; seq.push(procs[i].pid); break;
+      }
+    }
+  }
+  return finish.every(Boolean) ? seq : null;
+}
+
+function generateStrategies(state, cycles) {
+  if (!cycles.length) return [];
+  const affected = cycles.flat().filter(n => state.processes.find(p=>p.pid===n));
+  const victim = state.processes.filter(p=>affected.includes(p.pid)).sort((a,b)=>(a.priority||1)-(b.priority||1))[0];
+  return [
+    { id:'terminate', name:'Process Termination', cost:'low', risk:'medium',
+      description:`Abort ${victim?.pid} (lowest priority) to break the cycle.`,
+      steps:[`Checkpoint state of ${victim?.pid}`, `Terminate ${victim?.pid}`, `Release resources: ${(victim?.holds||[]).join(', ')||'none'}`, 'Re-run detection', 'Resume waiting processes']
+    },
+    { id:'preempt', name:'Resource Preemption', cost:'medium', risk:'high',
+      description:'Forcibly reclaim a resource from a process and roll it back to a checkpoint.',
+      steps:['Select victim process', 'Roll back to last checkpoint', 'Preempt held resources', 'Reallocate to waiting process', 'Restart victim from checkpoint']
+    },
+    { id:'order', name:'Lock Ordering', cost:'low', risk:'low',
+      description:'Enforce global resource acquisition order to prevent circular wait.',
+      steps:['Assign numeric IDs to resources', 'Require ascending-order acquisition', 'Audit and refactor existing code', 'Add runtime order assertions']
+    },
+    { id:'timeout', name:'Timeout (Wound-Wait)', cost:'low', risk:'low',
+      description:'Older processes preempt younger ones. Prevents permanent deadlock.',
+      steps:['Timestamp each process at creation', 'If requester is older: wound (abort) holder', 'Holder restarts with original timestamp', 'Guarantees liveness']
+    }
+  ];
+}
+
+function localDFSTrace(state) {
+  const graph = buildGraph(state);
+  const allNodes = [...state.processes.map(p=>p.pid), ...state.resources.map(r=>r.rid)];
+  const visited = new Set(), rec = [], steps = [], path = [];
+  function dfs(node, depth=0) {
+    visited.add(node); rec.push(node); path.push(node);
+    steps.push({ action:'visit', node, stack:[...rec], visited:[...visited], depth, message:`Visiting ${node}` });
+    for (const nb of (graph[node]||[])) {
+      if (!visited.has(nb)) {
+        steps.push({ action:'explore', node, neighbor:nb, stack:[...rec], visited:[...visited], depth, message:`Edge ${node} → ${nb}` });
+        dfs(nb, depth+1);
+      } else if (rec.includes(nb)) {
+        const ci = rec.indexOf(nb);
+        const cycle = [...rec.slice(ci), nb];
+        steps.push({ action:'cycle_found', node, neighbor:nb, cycle, stack:[...rec], visited:[...visited], depth, message:`CYCLE: ${cycle.join(' → ')}` });
+      }
+    }
+    path.pop(); rec.splice(rec.indexOf(node),1);
+    steps.push({ action:'backtrack', node, stack:[...rec], visited:[...visited], depth, message:`Backtrack from ${node}` });
+  }
+  allNodes.forEach(n => { if (!visited.has(n)) dfs(n); });
+  return steps;
+}
+
+// ── Local scenario data ───────────────────────────────────────────────────────
+const LOCAL_SCENARIOS = {
+  classic: {
+    processes: [
+      {pid:'P1',name:'Process 1',priority:2,holds:['R1'],waiting_for:['R2']},
+      {pid:'P2',name:'Process 2',priority:1,holds:['R2'],waiting_for:['R3']},
+      {pid:'P3',name:'Process 3',priority:3,holds:['R3'],waiting_for:['R1']},
+    ],
+    resources: [
+      {rid:'R1',name:'Database Lock',instances:1,available:0},
+      {rid:'R2',name:'File Handle',instances:1,available:0},
+      {rid:'R3',name:'Network Socket',instances:1,available:0},
+    ]
+  },
+  chain: {
+    processes: [
+      {pid:'P1',name:'Auth Service',priority:3,holds:['R1'],waiting_for:['R2']},
+      {pid:'P2',name:'DB Worker',priority:2,holds:['R2'],waiting_for:['R3']},
+      {pid:'P3',name:'Cache Mgr',priority:1,holds:['R3'],waiting_for:['R4']},
+      {pid:'P4',name:'File Writer',priority:2,holds:['R4'],waiting_for:['R5']},
+      {pid:'P5',name:'Log Daemon',priority:1,holds:['R5'],waiting_for:['R1']},
+    ],
+    resources: [
+      {rid:'R1',name:'Mutex A',instances:1,available:0},{rid:'R2',name:'Mutex B',instances:1,available:0},
+      {rid:'R3',name:'Semaphore C',instances:1,available:0},{rid:'R4',name:'Semaphore D',instances:1,available:0},
+      {rid:'R5',name:'Pipe E',instances:1,available:0},
+    ]
+  },
+  partial: {
+    processes: [
+      {pid:'P1',name:'Worker 1',priority:2,holds:['R1'],waiting_for:['R2']},
+      {pid:'P2',name:'Worker 2',priority:1,holds:['R2'],waiting_for:['R1']},
+      {pid:'P3',name:'Worker 3',priority:3,holds:['R3'],waiting_for:[]},
+      {pid:'P4',name:'Worker 4',priority:1,holds:[],waiting_for:['R3']},
+    ],
+    resources: [
+      {rid:'R1',name:'Lock A',instances:1,available:0},
+      {rid:'R2',name:'Lock B',instances:1,available:0},
+      {rid:'R3',name:'Lock C',instances:1,available:0},
+    ]
+  },
+  multi_instance: {
+    processes: [
+      {pid:'P1',name:'Process 1',priority:2,holds:['R1'],waiting_for:['R2']},
+      {pid:'P2',name:'Process 2',priority:1,holds:['R1','R2'],waiting_for:['R3']},
+      {pid:'P3',name:'Process 3',priority:3,holds:['R2','R3'],waiting_for:[]},
+    ],
+    resources: [
+      {rid:'R1',name:'Thread Pool',instances:2,available:0},
+      {rid:'R2',name:'DB Conn Pool',instances:3,available:1},
+      {rid:'R3',name:'Shared Mem',instances:2,available:0},
+    ]
+  },
+  safe: {
+    processes: [
+      {pid:'P1',name:'Reader A',priority:2,holds:['R1'],waiting_for:[]},
+      {pid:'P2',name:'Reader B',priority:1,holds:[],waiting_for:['R1']},
+      {pid:'P3',name:'Writer',priority:3,holds:['R2'],waiting_for:[]},
+    ],
+    resources: [
+      {rid:'R1',name:'Read Lock',instances:1,available:0},
+      {rid:'R2',name:'Write Lock',instances:1,available:0},
+    ]
+  }
+};
+
+function loadScenarioLocal(id) {
+  const s = LOCAL_SCENARIOS[id];
+  if (!s) return;
+  state = JSON.parse(JSON.stringify(s));
+}
+
+// ── Graph Rendering ───────────────────────────────────────────────────────────
+function computeLayout() {
+  const allNodes = [...state.processes.map(p=>p.pid), ...state.resources.map(r=>r.rid)];
+  const n = allNodes.length;
+  const pos = {};
+  const cx = W/2, cy = H/2;
+  const rx = Math.min(W,H) * 0.35, ry = Math.min(W,H) * 0.28;
+  allNodes.forEach((id, i) => {
+    const angle = (2*Math.PI*i/n) - Math.PI/2;
+    pos[id] = { x: cx + rx*Math.cos(angle), y: cy + ry*Math.sin(angle) };
+  });
+  return pos;
+}
+
+function getCyclicNodes() {
+  if (!analysisResult) return new Set();
+  return new Set(analysisResult.cycles.flat());
+}
+
+function drawGraph(highlightStep) {
+  if (!ctx || !W || !H) return;
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid dots
+  ctx.fillStyle = 'rgba(42,42,51,0.4)';
+  for (let x = 24; x < W; x += 32) for (let y = 24; y < H; y += 32) {
+    ctx.beginPath(); ctx.arc(x, y, 1, 0, Math.PI*2); ctx.fill();
+  }
+
+  if (!state.processes.length) {
+    ctx.fillStyle = '#6b6b80'; ctx.font = '13px "Space Mono"'; ctx.textAlign = 'center';
+    ctx.fillText('Load a scenario or add processes', W/2, H/2);
+    return;
+  }
+
+  const pos = computeLayout();
+  const cyclicNodes = getCyclicNodes();
+  const stepHighlight = highlightStep !== undefined ? traceSteps[highlightStep] : null;
+
+  // Draw edges — pass correct per-node radii: process circles r=22, resource squares r=20
+  state.processes.forEach(proc => {
+    (proc.holds||[]).forEach(rid => {
+      if (!pos[proc.pid] || !pos[rid]) return;
+      const inCycle = cyclicNodes.has(proc.pid) && cyclicNodes.has(rid);
+      drawEdge(pos[rid], pos[proc.pid], inCycle ? '#f04f4f' : '#3a3a47', false, true, 20, 22);
+    });
+    (proc.waiting_for||[]).forEach(rid => {
+      if (!pos[rid] || !pos[proc.pid]) return;
+      const inCycle = cyclicNodes.has(proc.pid) && cyclicNodes.has(rid);
+      drawEdge(pos[proc.pid], pos[rid], inCycle ? '#f0a030' : '#2a2a33', true, true, 22, 20);
+    });
+  });
+
+  // Draw nodes
+  [...state.processes.map(p=>({id:p.pid,isProc:true})), ...state.resources.map(r=>({id:r.rid,isProc:false}))].forEach(({id,isProc}) => {
+    if (!pos[id]) return;
+    const {x,y} = pos[id];
+    const inCycle = cyclicNodes.has(id);
+    const isHighlighted = stepHighlight && (stepHighlight.node === id || (stepHighlight.stack||[]).includes(id));
+    const isOnStack = stepHighlight && (stepHighlight.stack||[]).includes(id);
+
+    ctx.save();
+    if (isProc) {
+      ctx.beginPath(); ctx.arc(x, y, 22, 0, Math.PI*2);
+      ctx.fillStyle = inCycle ? 'rgba(240,79,79,0.15)' : (isOnStack ? 'rgba(124,106,245,0.2)' : '#18181d');
+      ctx.fill();
+      ctx.strokeStyle = inCycle ? '#f04f4f' : (isOnStack ? '#7c6af5' : '#3a3a47');
+      ctx.lineWidth = inCycle ? 2 : 1;
+      ctx.stroke();
+    } else {
+      const s = 18;
+      ctx.beginPath(); ctx.roundRect(x-s, y-s, s*2, s*2, 5);
+      ctx.fillStyle = inCycle ? 'rgba(240,160,48,0.12)' : '#18181d';
+      ctx.fill();
+      ctx.strokeStyle = inCycle ? '#f0a030' : '#3a3a47';
+      ctx.lineWidth = inCycle ? 2 : 1;
+      ctx.stroke();
+    }
+    ctx.fillStyle = inCycle ? (isProc ? '#f04f4f' : '#f0a030') : '#e8e8f0';
+    ctx.font = '500 11px "Space Mono"';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(id, x, y);
+    ctx.restore();
+
+    // Label below
+    const procObj = state.processes.find(p=>p.pid===id);
+    const resObj  = state.resources.find(r=>r.rid===id);
+    const label   = (procObj?.name || resObj?.name || '').substring(0,12);
+    if (label) {
+      ctx.fillStyle = '#6b6b80'; ctx.font = '10px "DM Sans"';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillText(label, x, y+26);
+    }
+  });
+}
+
+// BUG FIX: drawEdge now accepts per-node radii so arrows land correctly
+// on both circular process nodes (r=22) and square resource nodes (r=20).
+// Previously r1/r2 were both fixed at 24/20 causing arrows to overlap node bodies.
+function drawEdge(from, to, color, dashed, arrow, r1 = 24, r2 = 20) {
+  const angle = Math.atan2(to.y-from.y, to.x-from.x);
+  const sx = from.x + r1*Math.cos(angle), sy = from.y + r1*Math.sin(angle);
+  const ex = to.x   - r2*Math.cos(angle), ey = to.y   - r2*Math.sin(angle);
+  ctx.save();
+  ctx.beginPath();
+  if (dashed) ctx.setLineDash([4,4]); else ctx.setLineDash([]);
+  ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke();
+  if (arrow) {
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex - 9*Math.cos(angle-0.4), ey - 9*Math.sin(angle-0.4));
+    ctx.lineTo(ex - 9*Math.cos(angle+0.4), ey - 9*Math.sin(angle+0.4));
+    ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ── Matrix ────────────────────────────────────────────────────────────────────
+function renderMatrix() {
+  const cyclicNodes = getCyclicNodes();
+  const res = state.resources;
+  let html = '<thead><tr><th>Process</th>';
+  res.forEach(r => { html += `<th>${r.rid}<br><span style="color:var(--muted);font-weight:400;font-size:10px">${r.name}</span></th>`; });
+  html += '</tr></thead><tbody>';
+  state.processes.forEach(p => {
+    const dc = cyclicNodes.has(p.pid) ? 'deadlocked' : '';
+    html += `<tr class="${dc}"><td style="text-align:left;font-weight:700">${p.pid} <span style="font-weight:400;color:var(--muted);font-size:11px">${p.name}</span></td>`;
+    res.forEach(r => {
+      const h = (p.holds||[]).includes(r.rid);
+      const w = (p.waiting_for||[]).includes(r.rid);
+      if (h) html += `<td><span class="chip h">H</span></td>`;
+      else if (w) html += `<td><span class="chip w">W</span></td>`;
+      else html += `<td><span style="color:var(--border2)">—</span></td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody>';
+  document.getElementById('matrixTable').innerHTML = html;
+}
+
+// ── Trace / Step-Through ──────────────────────────────────────────────────────
+function renderTraceLog(steps, currentIdx) {
+  const log = document.getElementById('traceLog');
+  log.innerHTML = steps.map((s, i) => {
+    const cls = s.action === 'cycle_found' ? 'cycle' : s.action === 'visit' ? 'visit' : s.action === 'backtrack' ? 'back' : 'explore';
+    const active = i === currentIdx ? 'style="background:rgba(124,106,245,0.1)"' : '';
+    return `<div class="trace-line ${cls}" id="trace-${i}" ${active}>
+      <span class="step-num">#${i+1}</span>
+      <span class="action">${s.action.toUpperCase()}</span>
+      <span class="msg">${s.message}</span>
+    </div>`;
+  }).join('');
+}
+
+function updateStepUI() {
+  const step = traceSteps[traceStep];
+  // BUG FIX: display 1-indexed step number correctly clamped to total
+  document.getElementById('stepNum').textContent = Math.min(traceStep + 1, traceSteps.length);
+  document.getElementById('stepTotal').textContent = traceSteps.length;
+  document.getElementById('stepMsg').textContent = step ? step.message : '';
+  renderTraceLog(traceSteps, traceStep);
+  const el = document.getElementById(`trace-${traceStep}`);
+  if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  drawGraph(traceStep);
+}
+
+function stepForward() {
+  if (traceStep < traceSteps.length - 1) { traceStep++; updateStepUI(); }
+}
+function stepBack() {
+  if (traceStep > 0) { traceStep--; updateStepUI(); }
+}
+function exitTrace() {
+  document.getElementById('stepControls').classList.remove('visible');
+  traceSteps = []; traceStep = 0;
+  drawGraph();
+}
+
+// ── Results Rendering ─────────────────────────────────────────────────────────
+function renderResults(r) {
+  // Cycles
+  const cl = document.getElementById('cycleList');
+  if (!r.has_deadlock) {
+    cl.innerHTML = `<div class="safe-card">✓ No circular wait detected</div>`;
+  } else {
+    cl.innerHTML = r.cycles.map((c, i) => `
+      <div class="cycle-card">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <span class="bd bd-danger">CYCLE ${i+1}</span>
+          <span style="font-size:11px;color:var(--muted)">${c.filter(n=>state.processes.find(p=>p.pid===n)).length} processes</span>
+        </div>
+        <div class="cycle-path">${c.join(' → ')}</div>
+      </div>`).join('');
+  }
+
+  // Safe sequence
+  const sp = document.getElementById('safeSeqPanel');
+  if (r.safe_sequence && r.safe_sequence.length) {
+    sp.innerHTML = `<div class="safe-seq">${r.safe_sequence.map((id,i) => `<span class="seq-node">${id}</span>${i<r.safe_sequence.length-1?'<span class="seq-arrow">→</span>':''}`).join('')}</div>`;
+  } else {
+    sp.innerHTML = `<div style="color:var(--danger);font-family:var(--mono);font-size:11px">No safe sequence — system in unsafe state</div>`;
+  }
+
+  // Strategies
+  const sp2 = document.getElementById('strategiesPanel');
+  if (r.resolution_strategies && r.resolution_strategies.length) {
+    sp2.innerHTML = r.resolution_strategies.map((s,i) => `
+      <div class="strategy-card" onclick="toggleStrategy(this)">
+        <h4>${s.name}</h4>
+        <div class="cost-row">
+          <span class="bd bd-${s.cost==='low'?'ok':s.cost==='medium'?'warn':'danger'}">cost:${s.cost}</span>
+          <span class="bd bd-${s.risk==='low'?'ok':s.risk==='medium'?'warn':'danger'}">risk:${s.risk}</span>
+        </div>
+        <div class="strategy-body">
+          <p>${s.description}</p>
+          <ol>${(s.steps||[]).map(st=>`<li>${st}</li>`).join('')}</ol>
+        </div>
+      </div>`).join('');
+  } else {
+    sp2.innerHTML = `<div class="empty-state">No strategies needed — system is safe</div>`;
+  }
+}
+
+function toggleStrategy(el) {
+  el.classList.toggle('expanded');
+  el.querySelector('.strategy-body').classList.toggle('open');
+}
+
+function clearResults() {
+  document.getElementById('cycleList').innerHTML = '<div class="empty-state">Run analysis to detect cycles</div>';
+  document.getElementById('safeSeqPanel').innerHTML = '<div class="empty-state">—</div>';
+  document.getElementById('strategiesPanel').innerHTML = '<div class="empty-state">Run analysis to see strategies</div>';
+}
+
+function renderProcPanel() {
+  const panel = document.getElementById('procPanel');
+  const cyclicNodes = analysisResult ? getCyclicNodes() : new Set();
+  panel.innerHTML = state.processes.map(p => {
+    const dc = cyclicNodes.has(p.pid);
+    const dotColor = dc ? 'var(--danger)' : (p.waiting_for?.length ? 'var(--warn)' : 'var(--ok)');
+    const heldChips = (p.holds||[]).map(r=>`<span style="font-family:var(--mono);font-size:10px;background:rgba(79,191,127,.1);border:1px solid rgba(79,191,127,.3);border-radius:3px;padding:1px 6px;color:var(--ok)">${r}</span>`).join(' ');
+    const waitChips = (p.waiting_for||[]).map(r=>`<span style="font-family:var(--mono);font-size:10px;background:rgba(240,160,48,.1);border:1px solid rgba(240,160,48,.3);border-radius:3px;padding:1px 6px;color:var(--warn)">⏳${r}</span>`).join(' ');
+    return `<div class="proc-item${dc?' deadlocked':''}">
+      <div class="proc-dot" style="background:${dotColor}"></div>
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-family:var(--mono);font-size:11px;font-weight:700">${p.pid}</span>
+          <span style="font-size:11px;color:var(--muted)">${p.name}</span>
+          ${dc?'<span class="bd bd-danger" style="margin-left:auto">deadlocked</span>':''}
+        </div>
+        <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${heldChips}${waitChips}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── UI Helpers ────────────────────────────────────────────────────────────────
+function setStatus(type, text) {
+  const pill = document.getElementById('globalStatus');
+  pill.className = 'status-pill ' + type;
+  document.getElementById('statusText').textContent = text;
+}
+
+function switchView(view, btn) {
+  currentView = view;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('ragCanvas').style.display    = view === 'graph'   ? 'block' : 'none';
+  document.getElementById('matrixView').style.display   = view === 'matrix'  ? 'block' : 'none';
+  document.getElementById('traceView').style.display    = view === 'trace'   ? 'block' : 'none';
+  document.getElementById('bankersView').style.display  = view === 'bankers' ? 'block' : 'none';
+  if (view === 'matrix')  renderMatrix();
+  if (view === 'graph')   { resizeCanvas(); drawGraph(); }
+  if (view === 'bankers') { renderBankersMatrix(); updateSimSelects(); }
+}
+
+// ── Banker's: Allocation Matrix ───────────────────────────────────────────────
+function renderBankersMatrix() {
+  const procs = state.processes, res = state.resources;
+  if (!procs.length || !res.length) {
+    document.getElementById('bankersMatrix').innerHTML = '<div class="empty-state">Load a scenario first</div>';
+    return;
+  }
+  const cyclicNodes = getCyclicNodes();
+  const cn = v => `<span class="bk-num${v===0?' zero':''}">${v}</span>`;
+
+  // Header: one group of (Alloc | Need) per resource
+  let html = '<table class="bankers-matrix"><thead><tr><th>Process</th><th>Name</th>';
+  res.forEach(r => {
+    html += `<th colspan="2" style="text-align:center">${r.rid}<br><span style="font-weight:400;font-size:9px;color:var(--muted)">${r.name}</span></th>`;
+  });
+  html += '</tr><tr><th></th><th></th>';
+  res.forEach(() => {
+    html += '<th style="font-size:9px;color:var(--ok)">ALLOC</th><th style="font-size:9px;color:var(--warn)">NEED</th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  // One row per process
+  procs.forEach(p => {
+    const unsafe = cyclicNodes.has(p.pid);
+    html += `<tr class="${unsafe ? 'proc-unsafe' : 'proc-safe'}">`;
+    html += `<td style="text-align:left;font-weight:700;font-family:var(--mono)">${p.pid}</td>`;
+    html += `<td style="text-align:left;color:var(--muted);font-size:11px">${p.name}</td>`;
+    res.forEach(r => {
+      const alloc = (p.holds||[]).filter(x => x === r.rid).length;
+      const need  = (p.waiting_for||[]).filter(x => x === r.rid).length;
+      html += `<td>${cn(alloc)}</td><td>${cn(need)}</td>`;
+    });
+    html += '</tr>';
+  });
+
+  // Footer row: Available per resource
+  html += `<tr style="border-top:2px solid var(--border2)">`;
+  html += `<td style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--info)" colspan="2">AVAILABLE</td>`;
+  res.forEach(r => {
+    const avail = r.available ?? 0;
+    html += `<td colspan="2" style="text-align:center">${cn(avail)}</td>`;
+  });
+  html += '</tr>';
+
+  html += '</tbody></table>';
+  document.getElementById('bankersMatrix').innerHTML = html;
+}
+
+// ── Banker's: Auto-Resolve ────────────────────────────────────────────────────
+async function runBankersResolve() {
+  if (!state.processes.length) return;
+  const btn = document.getElementById('runResolveBtn');
+  btn.disabled = true; btn.textContent = '⟳ Running…';
+  document.getElementById('resolveResult').innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
+  document.getElementById('resolveSteps').innerHTML = '';
+
+  const data = await apiFetch('/bankers/resolve', state);
+  const result = data || localBankersResolve(state);
+
+  // Steps log
+  const stepsHtml = (result.steps || []).map(s => `
+    <div class="resolve-step-row">
+      <span class="rs-pid">${s.process}</span>
+      <span class="rs-badge ${s.granted ? 'granted' : 'denied'}">${s.granted ? '✓ GRANT' : '✗ DENY'}</span>
+      <span class="rs-msg">${s.reason}</span>
+    </div>`).join('');
+  document.getElementById('resolveSteps').innerHTML = stepsHtml || '<div class="empty-state">No pending requests</div>';
+
+  // Summary
+  const resDiv = document.getElementById('resolveResult');
+  if (result.resolved) {
+    const seq = (result.final_safe_sequence || []).join(' → ');
+    resDiv.innerHTML = `<div class="safe-card">✓ Deadlock resolved! Safe sequence: <strong>${seq || '—'}</strong></div>`;
+    // Apply new state if available
+    if (result.final_state) {
+      state = result.final_state;
+      analysisResult = null;
+      updateSelects(); drawGraph(); renderProcPanel(); clearResults();
+      await runAnalysis();
+      // Refresh the Banker's matrix to reflect the resolved state
+      renderBankersMatrix();
+    }
+  } else {
+    resDiv.innerHTML = `<div class="cycle-card"><span class="bd bd-danger">UNRESOLVED</span><div class="cycle-path" style="margin-top:6px">Some requests could not be safely granted. Manual intervention required.</div></div>`;
+  }
+  btn.disabled = false; btn.textContent = '⚙ Run Banker\'s Fix';
+}
+
+// ── Banker's: Safety Trace ────────────────────────────────────────────────────
+async function runBankersTrace() {
+  if (!state.processes.length) return;
+  document.getElementById('bankersTrace').innerHTML = '<div class="empty-state"><span class="spinner"></span></div>';
+  const data = await apiFetch('/bankers/trace', state);
+  const result = data || localBankersTrace(state);
+  const html = (result.steps || []).map(s => {
+    const phase = s.phase;
+    const cls = phase === 'grant' ? 'highlight-grant' : phase === 'deny' ? 'highlight-deny' : '';
+    return `<div class="bk-step ${cls}">
+      <span class="bk-phase ${phase}">${phase.toUpperCase()}</span>
+      <span class="bk-msg">${s.message}</span>
+    </div>`;
+  }).join('');
+  document.getElementById('bankersTrace').innerHTML = html || '<div class="empty-state">No steps</div>';
+}
+
+// ── Banker's: Request Simulator ───────────────────────────────────────────────
+function updateSimSelects() {
+  const pidSel = document.getElementById('simPid');
+  const ridSel = document.getElementById('simRid');
+  if (!pidSel || !ridSel) return;
+  const curPid = pidSel.value, curRid = ridSel.value;
+  pidSel.innerHTML = '<option value="">Process…</option>';
+  ridSel.innerHTML = '<option value="">Resource…</option>';
+  state.processes.forEach(p => { const o = document.createElement('option'); o.value=p.pid; o.textContent=`${p.pid} — ${p.name}`; pidSel.appendChild(o); });
+  state.resources.forEach(r => { const o = document.createElement('option'); o.value=r.rid; o.textContent=`${r.rid} — ${r.name}`; ridSel.appendChild(o); });
+  pidSel.value = curPid; ridSel.value = curRid;
+}
+
+async function runSimRequest() {
+  const pid = document.getElementById('simPid').value;
+  const rid = document.getElementById('simRid').value;
+  const cnt = parseInt(document.getElementById('simCount').value) || 1;
+  if (!pid || !rid) { alert('Select a process and resource.'); return; }
+  const body = { ...state, pid, requested: { [rid]: cnt } };
+  const data = await apiFetch('/bankers/simulate', body);
+  const result = data || localSimRequest(state, pid, { [rid]: cnt });
+  const div = document.getElementById('simResult');
+  if (result.granted) {
+    const seq = (result.safe_sequence || []).join(' → ');
+    div.innerHTML = `<div class="sim-result granted">✓ GRANTED — ${result.reason}<br>Safe sequence: <strong>${seq}</strong></div>`;
+  } else {
+    div.innerHTML = `<div class="sim-result denied">✗ DENIED — ${result.reason}</div>`;
+  }
+}
+
+// ── Local Banker's fallbacks (when API is offline) ────────────────────────────
+function localBankersTrace(s) {
+  const procs = s.processes, res = s.resources;
+  const n = procs.length, m = res.length;
+  const avail = res.map(r => r.available ?? 0);
+  const alloc = procs.map(p => res.map(r => (p.holds||[]).filter(x=>x===r.rid).length));
+  // Need = additional resources the process may still request (waiting_for only)
+  const need  = procs.map(p => res.map(r => (p.waiting_for||[]).filter(x=>x===r.rid).length));
+  const finish = new Array(n).fill(false);
+  const work = [...avail], seq = [], steps = [];
+  steps.push({ phase:'init', message:`Initialise Work = Available [${work.join(', ')}]` });
+  for (let iter = 0; iter < n; iter++) {
+    let foundInPass = false;
+    for (let i = 0; i < n; i++) {
+      if (finish[i]) continue;
+      const ok = need[i].every((v, j) => v <= work[j]);
+      steps.push({ phase:'check', message:`Check ${procs[i].pid}: Need [${need[i].join(',')}] ≤ Work [${work.join(',')}]? ${ok?'YES ✓':'NO ✗'}` });
+      if (ok) {
+        // Process can complete — release its allocation back to work
+        for (let j = 0; j < m; j++) work[j] += alloc[i][j];
+        finish[i] = true;
+        foundInPass = true;
+        seq.push(procs[i].pid);
+        steps.push({ phase:'grant', message:`${procs[i].pid} finishes → releases alloc [${alloc[i].join(',')}] → Work = [${work.join(',')}]` });
+      }
+    }
+    if (!foundInPass) break; // no progress, stop early
+  }
+  const safe = finish.every(Boolean);
+  steps.push({ phase:'result', message: safe ? `✓ SAFE — Safe sequence: ${seq.join(' → ')}` : '✗ UNSAFE — Deadlock detected. Not all processes can finish.' });
+  return { steps, safe, safe_sequence: safe ? seq : [] };
+}
+
+function localSimRequest(s, pid, requested) {
+  const procs = s.processes, res = s.resources;
+  const n = procs.length, m = res.length;
+  const pi = procs.findIndex(p => p.pid === pid);
+  if (pi < 0) return { granted: false, reason: 'Process not found.' };
+
+  // Deep-copy vectors so we don't mutate caller's state
+  const avail = res.map(r => r.available ?? 0);
+  const alloc = procs.map(p => res.map(r => (p.holds||[]).filter(x=>x===r.rid).length));
+  // Need = only what process is currently waiting for
+  const need  = procs.map(p => res.map(r => (p.waiting_for||[]).filter(x=>x===r.rid).length));
+  const reqVec = res.map(r => requested[r.rid] || 0);
+
+  // Step 1: request ≤ need?
+  for (let j = 0; j < m; j++) {
+    if (reqVec[j] > need[pi][j])
+      return { granted:false, reason:`Request (${reqVec[j]}) exceeds declared need (${need[pi][j]}) for ${res[j].rid}.` };
+  }
+  // Step 2: request ≤ available?
+  for (let j = 0; j < m; j++) {
+    if (reqVec[j] > avail[j])
+      return { granted:false, reason:`Insufficient ${res[j].rid}: requested ${reqVec[j]}, only ${avail[j]} available. Process must wait.` };
+  }
+  // Step 3: pretend-allocate
+  for (let j = 0; j < m; j++) {
+    avail[j]    -= reqVec[j];
+    alloc[pi][j] += reqVec[j];
+    need[pi][j]  -= reqVec[j];
+  }
+  // Step 4: safety check
+  const finish = new Array(n).fill(false);
+  const work = [...avail];
+  const seq = [];
+  for (let pass = 0; pass < n; pass++) {
+    for (let i = 0; i < n; i++) {
+      if (!finish[i] && need[i].every((v, k) => v <= work[k])) {
+        for (let k = 0; k < m; k++) work[k] += alloc[i][k];
+        finish[i] = true;
+        seq.push(procs[i].pid);
+      }
+    }
+  }
+  if (!finish.every(Boolean))
+    return { granted:false, reason:'Granting would lead to an unsafe state (potential deadlock). Request denied.' };
+  return { granted:true, reason:'System remains in a safe state after this grant.', safe_sequence:seq };
+}
+
+function localBankersResolve(s) {
+  // Deep-copy the entire state so we never mutate the caller's objects
+  const deepCopy = obj => JSON.parse(JSON.stringify(obj));
+  let cur = { processes: deepCopy(s.processes), resources: deepCopy(s.resources) };
+  const steps = [];
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    for (const proc of cur.processes) {
+      if (!proc.waiting_for || proc.waiting_for.length === 0) continue;
+
+      // Build a request map: {rid: count} from waiting_for list
+      const req = {};
+      for (const rid of [...new Set(proc.waiting_for)]) {
+        req[rid] = proc.waiting_for.filter(x => x === rid).length;
+      }
+
+      // Check if this request is safe to grant
+      const result = localSimRequest(cur, proc.pid, req);
+      steps.push({ process: proc.pid, granted: result.granted, reason: result.reason });
+
+      if (result.granted) {
+        // Apply the grant: move waited resources into holds, clear waiting_for, deduct from available
+        for (const [rid, cnt] of Object.entries(req)) {
+          for (let i = 0; i < cnt; i++) proc.holds.push(rid);
+        }
+        proc.waiting_for = [];
+        for (const r of cur.resources) {
+          r.available = Math.max(0, (r.available ?? 0) - (req[r.rid] || 0));
+        }
+        changed = true;
+      }
+    }
+  }
+
+  // Evaluate final state
+  const remaining = localAnalyze(cur).cycles;
+  const seq = localSafeSeq(cur);
+  return {
+    steps,
+    resolved: remaining.length === 0,
+    final_safe_sequence: seq,
+    final_state: cur
+  };
+}
+
+function updateSelects() {
+  ['newHolds','newWaits'].forEach(id => {
+    const sel = document.getElementById(id);
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">${id==='newHolds'?'Holds…':'Waiting for…'}</option>`;
+    state.resources.forEach(r => { const o = document.createElement('option'); o.value=r.rid; o.textContent=`${r.rid} — ${r.name}`; sel.appendChild(o); });
+    sel.value = cur;
+  });
+}
+
+function addProcess() {
+  const pid = document.getElementById('newPid').value.trim();
+  const name = document.getElementById('newName').value.trim() || pid;
+  // BUG FIX: validate ID format before adding to prevent invalid graph nodes
+  if (!pid || !/^[A-Za-z0-9_\-]{1,16}$/.test(pid)) {
+    alert('PID must be 1–16 alphanumeric, underscore, or hyphen characters.');
+    return;
+  }
+  if (state.processes.find(p => p.pid === pid)) {
+    alert(`Process "${pid}" already exists.`);
+    return;
+  }
+  const holds = document.getElementById('newHolds').value;
+  const waits = document.getElementById('newWaits').value;
+  const prio = parseInt(document.getElementById('newPrio').value) || 1;
+  state.processes.push({ pid, name, priority: prio, holds: holds?[holds]:[], waiting_for: waits?[waits]:[] });
+  document.getElementById('newPid').value = ''; document.getElementById('newName').value = '';
+  analysisResult = null; updateSelects(); drawGraph(); renderProcPanel(); clearResults();
+}
+
+function addResource() {
+  const rid = document.getElementById('newRid').value.trim();
+  const name = document.getElementById('newRname').value.trim() || rid;
+  if (!rid || !/^[A-Za-z0-9_\-]{1,16}$/.test(rid)) {
+    alert('RID must be 1–16 alphanumeric, underscore, or hyphen characters.');
+    return;
+  }
+  if (state.resources.find(r => r.rid === rid)) {
+    alert(`Resource "${rid}" already exists.`);
+    return;
+  }
+  const inst = parseInt(document.getElementById('newInst').value) || 1;
+  state.resources.push({ rid, name, instances: inst, available: inst });
+  document.getElementById('newRid').value = ''; document.getElementById('newRname').value = '';
+  analysisResult = null; updateSelects(); drawGraph();
+}
+
+function clearAll() {
+  state = { processes: [], resources: [] };
+  analysisResult = null;
+  updateSelects(); drawGraph(); renderProcPanel(); clearResults();
+  document.querySelectorAll('.scenario-btn').forEach(b=>b.classList.remove('active'));
+  setStatus('idle','Ready');
+}
+
+function exportJSON() {
+  const blob = new Blob([JSON.stringify({state, analysis:analysisResult}, null, 2)], {type:'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'deadlock-state.json'; a.click();
+}
+
+// BUG FIX: The original file had TWO definitions of loadScenario (lines 459 & 1031).
+// The second (this one) silently overwrote the first. The first used
+// event.currentTarget inside an async function which becomes null after the
+// first await — causing a crash. Consolidated into one correct definition:
+// capture the button reference synchronously BEFORE any await.
+async function loadScenario(id) {
+  // Capture button reference synchronously — event.currentTarget is nulled
+  // by the browser after the first suspension point (await).
+  const btn = event?.currentTarget || null;
+  document.querySelectorAll('.scenario-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+
+  setStatus('idle', 'Loading…');
+  const data = await apiFetch(`/scenarios/${id}`);
+  if (data && data.processes) {
+    state = { processes: data.processes, resources: data.resources };
+  } else {
+    loadScenarioLocal(id);
+  }
+  analysisResult = null;
+  updateSelects(); renderProcPanel(); clearResults();
+  drawGraph();
+  await runAnalysis();
+}
+
+// Auto-run on load
+setTimeout(() => {
+  document.querySelector('.scenario-btn').classList.add('active');
+  runAnalysis();
+}, 150);
+</script>
+</body>
+</html>
