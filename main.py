@@ -102,7 +102,7 @@ class AnalysisResponse(BaseModel):
     graph_edges:          list[dict]
 
 
-# ── Helper ───────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _to_system_state(model: SystemStateModel) -> SystemState:
     """Convert Pydantic model → engine dataclass.
