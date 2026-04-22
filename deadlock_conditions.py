@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from collections import defaultdict
 
 
-# ── Deadlock Detection Monitor ───────────────────────────────────────────────
+# ── Deadlock Detection Monitor ──────────────────────────────────────────────
 
 class DeadlockMonitor:
     """
