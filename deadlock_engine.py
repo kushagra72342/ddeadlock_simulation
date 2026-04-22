@@ -21,7 +21,7 @@ from typing import Optional
 from collections import defaultdict
 
 
-# ── Data Structures ──────────────────────────────────────────────────────────
+# ── Data Structure ──────────────────────────────────────────────────────────
 
 @dataclass
 class SystemState:
