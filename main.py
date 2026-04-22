@@ -38,7 +38,7 @@ engine = DeadlockEngine()
 _stats = {"analyses_run": 0, "deadlocks_found": 0, "traces_run": 0}
 
 
-# ── Request / Response Models ────────────────────────────────────────────────
+# ── Request / Response Model ────────────────────────────────────────────────
 
 _ID_RE = re.compile(r'^[A-Za-z0-9_\-]{1,16}$')
 
